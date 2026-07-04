@@ -31,6 +31,14 @@ nano .env
 npm start
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+The test suite uses the built-in Node.js test runner only. It does not connect to Discord and does not need a bot token.
+
 ## Discord permissions
 
 The bot needs:

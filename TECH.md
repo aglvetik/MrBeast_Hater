@@ -93,6 +93,12 @@ The database is local to the bot process and defaults to:
 ./data/bot.sqlite
 ```
 
+## Testing
+
+The project includes a small unit-style test suite built with `node:test` and `node:assert/strict`.
+
+The tests use mocked Discord-like objects for guilds, channels, members, roles, and messages. They do not log in a bot, do not require a token, and do not make network calls.
+
 ## Known Discord limitations
 
 - Discord timeouts are capped at 28 days.
