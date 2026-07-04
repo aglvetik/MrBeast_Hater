@@ -1,0 +1,29 @@
+{
+  "name": "discord-image-ping-guard",
+  "version": "1.0.0",
+  "description": "A small Discord moderation bot that deletes image-based mass-ping spam and timeouts the sender.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/*.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "moderation",
+    "spam"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "discord.js": "^14.17.3",
+    "dotenv": "^16.4.7"
+  },
+  "overrides": {
+    "undici": "6.27.0"
+  }
+}
