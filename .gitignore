@@ -1,8 +1,10 @@
 .env
 .env.*
 !.env.example
-data/*.sqlite
-data/*.sqlite-*
+coverage/
+dist/
 node_modules/
-npm-debug.log*
+tmp/
+backups/
+*.log
 .DS_Store

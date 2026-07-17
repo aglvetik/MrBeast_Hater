@@ -1,106 +1,114 @@
 # Technical Notes
 
-## Detection rule
+PingGuard v2 is a TypeScript, PostgreSQL, and Discord.js v14 rebuild of the earlier prototype.
 
-The bot only flags a message when all of these are true:
+## Architecture
 
-- the message contains `@everyone`, `@here`, or a mass role mention
-- the message includes at least one image attachment
-- the cleaned message text is short enough to count as no real text
-
-Normal user mentions do not count as mass ping.
-
-## Manual safe channels
-
-`SAFE_CHANNEL_IDS` is checked before spam detection. Messages in those channels are ignored completely:
-
-- no delete
-- no timeout
-- no incident write
-- no Discord moderation log
-
-This is the recommended production-safe option for news and announcement channels.
-
-## Optional automatic safe channels
-
-When `AUTO_SAFE_CHANNELS=true`, the bot estimates how many real non-bot members can send messages in the current channel.
-
-It counts:
-
-- `checkedMembers`: non-bot guild members in cache
-- `writers`: non-bot members where `channel.permissionsFor(member).has(SendMessages)` is true
-
-If `writers / checkedMembers` is less than or equal to `AUTO_SAFE_MAX_WRITERS_RATIO`, the channel is treated as safe.
-
-If member fetching fails or is rate-limited, the bot does not crash. It treats the channel as not safe and continues with normal spam detection.
-
-## Shared member cache
-
-`src/memberCache.js` provides a shared guild-member fetch helper for both automatic safe-channel detection and mass-role coverage detection.
-
-It keeps:
-
-- a per-guild last successful fetch timestamp
-- a per-guild in-flight fetch promise so concurrent callers reuse the same request
-- a per-guild retry-until timestamp when Discord rate-limits the bot
-
-It skips refetching when:
-
-- the member cache is already close to full based on `MEMBER_FETCH_CACHE_FULL_RATIO`
-- or the last successful fetch is still within `MEMBER_FETCH_TTL_SECONDS`
-
-This helps avoid repeated `guild.members.fetch()` calls and reduces gateway rate-limit pressure.
-
-## Mass role coverage
-
-Mass role coverage is calculated from non-bot cached members:
+The code follows a small ports-and-adapters structure:
 
 ```text
-members with role / non-bot guild members
+Discord messageCreate
+-> Discord message mapper
+-> pure detection engine
+-> policy engine
+-> application action service
+-> Discord moderation adapter
+-> incident repository
+-> mod-log presenter
 ```
 
-The bot does not trust `role.members.size` as the source of truth because Discord.js role membership depends on member cache and can undercount.
+Domain detection and policy modules do not import `discord.js`. PostgreSQL is the source of truth, with a short in-memory settings cache used only as an optimization.
 
-For non-forced roles:
+## Detection
 
-- the bot uses the shared member cache helper first
-- if member fetch is unavailable or rate-limited, the role is not treated as mass
+The detector is deterministic. It classifies:
 
-For forced roles:
+- `@everyone`, `@here`, and protected role mentions;
+- image, GIF, video, embed image, embed thumbnail, and sticker counts;
+- normalized low-information text;
+- short burst windows.
 
-- `FORCED_MASS_ROLE_IDS` wins immediately
-- this is the safest override for important roles and small servers
+It never downloads attachments, fetches message URLs, stores raw content, or stores attachment URLs.
 
-## Action result tracking
+## Role Detection
 
-Moderation actions are tracked independently:
+v2 intentionally does not calculate role coverage from guild member lists. The runtime does not request Guild Members Intent and does not fetch full guild member lists.
 
-- message delete success or failure
-- timeout success or failure
-- compact error summaries for the Discord log
+Role detection modes are:
 
-This keeps the moderation embed accurate. For example, the log can show `deleted + timeout failed` instead of pretending both actions succeeded.
+- `MANUAL`: `@everyone`, `@here`, and roles configured in `protected_roles`.
+- `ALL_ROLES`: any actual role mention, with a false-positive warning.
 
-Timeout failures do not stop incident logging or mod-log delivery.
+## Channel And Trust Policies
 
-## SQLite incidents
+Channel policies are explicit per guild and channel:
 
-Incidents are stored in SQLite with guild ID, user ID, channel ID, reason, action summary, image count, role details, and timestamp.
+- `ENFORCE`: detect, delete, punish, log.
+- `DELETE_ONLY`: detect, delete, log.
+- `MONITOR`: detect and log only.
+- `DISABLED`: ignore that channel.
 
-The database is local to the bot process and defaults to:
+Trust policies are explicit database rows for roles, bot IDs, or webhook IDs:
 
-```text
-./data/bot.sqlite
-```
+- `NO_PUNISH`
+- `MONITOR`
+- `ALLOW`
+
+There is no automatic safe announcement-channel bypass in v2.
+
+## Database
+
+Drizzle migrations live in `drizzle/`. Guild-owned repositories require `guildId` and store Discord snowflakes as `varchar(20)`.
+
+The schema includes:
+
+- `guild_settings`
+- `protected_roles`
+- `channel_policies`
+- `trusted_actors`
+- `incidents`
+- `sanctions`
+- `escalation_steps`
+- `config_audit_events`
+
+The incident table has a unique `(guild_id, message_id)` constraint. Raw message content, normalized text, usernames, avatars, attachment URLs, embed URLs, images, and full member lists are not schema fields.
+
+## Concurrency And Idempotency
+
+The application service uses a process-local lock keyed by `guildId:actorId`, a unique incident constraint, and a per-guild sanction cooldown. This is suitable for one VPS process. Future sharding should replace the process-local lock with PostgreSQL advisory locks or Redis without changing domain logic.
+
+Setup completion and full guild deletion use guild-scoped database transactions.
+
+## Health And Metrics
+
+Fastify serves:
+
+- `GET /health/live`
+- `GET /health/ready`
+- `GET /metrics`
+
+Metrics avoid guild, channel, user, and message ID labels. `/metrics` should use `METRICS_TOKEN` unless bound to an internal interface.
 
 ## Testing
 
-The project includes a small unit-style test suite built with `node:test` and `node:assert/strict`.
+Vitest is the active test runner. Tests use fake adapters and mocked inputs, not a live Discord client. Property tests use `fast-check` for normalization behavior.
 
-The tests use mocked Discord-like objects for guilds, channels, members, roles, and messages. They do not log in a bot, do not require a token, and do not make network calls.
+Primary commands:
 
-## Known Discord limitations
+```bash
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:coverage
+npm run build
+```
 
-- Discord timeouts are capped at 28 days.
-- A normal bot reacts after `messageCreate`, so the first ping may appear briefly before deletion.
-- The goal is to make the first suspicious message the last one.
+## Docker
+
+The Dockerfile is multi-stage, pinned to Node.js 24, runs production dependencies only in the runtime image, and uses a non-root user. Compose runs `bot`, `postgres`, and `caddy`; PostgreSQL has no public host port by default.
+
+## Known Limitations
+
+- Integration tests that require a real PostgreSQL instance are intended for CI/service-container environments.
+- The first visible Discord ping can appear briefly because bots moderate after `messageCreate`.
+- Sharding is designed for later but not enabled in v2.

@@ -1,0 +1,17 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$BASE_URL:http://localhost} {
+	root * /srv/site
+	encode zstd gzip
+	file_server
+
+	handle /health/live {
+		reverse_proxy bot:8080
+	}
+
+	handle /health/ready {
+		reverse_proxy bot:8080
+	}
+}
