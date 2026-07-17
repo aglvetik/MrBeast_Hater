@@ -155,14 +155,6 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
           subcommand
             .setName("add")
             .setDescription("Authorize a scoped publisher")
-            .addUserOption((option) => option.setName("user").setDescription("User to authorize"))
-            .addRoleOption((option) => option.setName("role").setDescription("Role to authorize"))
-            .addStringOption((option) =>
-              option.setName("bot_id").setDescription("Bot user ID to authorize")
-            )
-            .addStringOption((option) =>
-              option.setName("webhook_id").setDescription("Webhook ID to authorize")
-            )
             .addStringOption((option) =>
               option
                 .setName("scope")
@@ -173,6 +165,14 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
                   { name: "CHANNEL", value: "CHANNEL" },
                   { name: "CATEGORY", value: "CATEGORY" }
                 )
+            )
+            .addUserOption((option) => option.setName("user").setDescription("User to authorize"))
+            .addRoleOption((option) => option.setName("role").setDescription("Role to authorize"))
+            .addStringOption((option) =>
+              option.setName("bot_id").setDescription("Bot user ID to authorize")
+            )
+            .addStringOption((option) =>
+              option.setName("webhook_id").setDescription("Webhook ID to authorize")
             )
             .addChannelOption((option) =>
               option
@@ -191,14 +191,6 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
           subcommand
             .setName("remove")
             .setDescription("Remove a scoped publisher")
-            .addUserOption((option) => option.setName("user").setDescription("User to remove"))
-            .addRoleOption((option) => option.setName("role").setDescription("Role to remove"))
-            .addStringOption((option) =>
-              option.setName("bot_id").setDescription("Bot user ID to remove")
-            )
-            .addStringOption((option) =>
-              option.setName("webhook_id").setDescription("Webhook ID to remove")
-            )
             .addStringOption((option) =>
               option
                 .setName("scope")
@@ -209,6 +201,14 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
                   { name: "CHANNEL", value: "CHANNEL" },
                   { name: "CATEGORY", value: "CATEGORY" }
                 )
+            )
+            .addUserOption((option) => option.setName("user").setDescription("User to remove"))
+            .addRoleOption((option) => option.setName("role").setDescription("Role to remove"))
+            .addStringOption((option) =>
+              option.setName("bot_id").setDescription("Bot user ID to remove")
+            )
+            .addStringOption((option) =>
+              option.setName("webhook_id").setDescription("Webhook ID to remove")
             )
             .addChannelOption((option) =>
               option
@@ -235,6 +235,19 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
           subcommand
             .setName("add")
             .setDescription("Add an exception")
+            .addStringOption((option) =>
+              option
+                .setName("mode")
+                .setDescription("Exception mode")
+                .setRequired(true)
+                .addChoices(
+                  { name: "MONITOR_ONLY", value: "MONITOR_ONLY" },
+                  { name: "NO_PUNISH", value: "NO_PUNISH" },
+                  { name: "DELETE_ONLY", value: "DELETE_ONLY" },
+                  { name: "IGNORE_ALL", value: "IGNORE_ALL" },
+                  { name: "FULL_BYPASS", value: "FULL_BYPASS" }
+                )
+            )
             .addChannelOption((option) =>
               option
                 .setName("channel")
@@ -258,19 +271,6 @@ export function buildApplicationCommands(): readonly RESTPostAPIApplicationComma
             )
             .addStringOption((option) =>
               option.setName("webhook_id").setDescription("Webhook ID exception target")
-            )
-            .addStringOption((option) =>
-              option
-                .setName("mode")
-                .setDescription("Exception mode")
-                .setRequired(true)
-                .addChoices(
-                  { name: "MONITOR_ONLY", value: "MONITOR_ONLY" },
-                  { name: "NO_PUNISH", value: "NO_PUNISH" },
-                  { name: "DELETE_ONLY", value: "DELETE_ONLY" },
-                  { name: "IGNORE_ALL", value: "IGNORE_ALL" },
-                  { name: "FULL_BYPASS", value: "FULL_BYPASS" }
-                )
             )
             .addStringOption((option) =>
               option
