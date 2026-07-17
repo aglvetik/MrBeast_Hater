@@ -43,6 +43,23 @@ describe("media and text summaries", () => {
     expect(summary.totalVisualCount).toBe(1);
   });
 
+  it("accepts attachment sizes across every bucket without affecting totals", () => {
+    const summary = summarizeMedia(
+      [
+        { contentType: "image/png", fileName: "small.png", sizeBytes: 128_000 },
+        { contentType: "image/png", fileName: "medium.png", sizeBytes: 512_000 },
+        { contentType: "image/png", fileName: "large.png", sizeBytes: 2_000_000 },
+        { contentType: "image/png", fileName: "huge.png", sizeBytes: 6_000_000 },
+        { contentType: null, fileName: null, sizeBytes: Number.NaN }
+      ],
+      [],
+      0
+    );
+
+    expect(summary.imageAttachments).toBe(4);
+    expect(summary.totalVisualCount).toBe(4);
+  });
+
   it("normalizes mentions, urls, markdown, and low-information text", () => {
     const summary = summarizeText("**<@123> @everyone https://example.com !!!**", 5);
 

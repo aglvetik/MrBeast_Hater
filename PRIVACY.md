@@ -1,18 +1,35 @@
 # Privacy Policy
 
-PingGuard stores only operational Discord IDs and moderation metadata:
+PingGuard stores only the minimum metadata needed to operate the moderation system.
 
-- guild IDs;
-- channel IDs;
-- message IDs;
-- actor IDs;
-- role IDs mentioned or configured;
-- detection rule IDs, confidence, signal summaries, media counts, action results, and timestamps.
+## Stored
 
-PingGuard does not store message content, normalized content, usernames, display names, avatars, attachment URLs, images, videos, GIFs, stickers, or full member lists.
+- guild, channel, category, role, user, bot, webhook, and message IDs
+- detection rule IDs
+- protected mention class
+- media counts and bounded media classes
+- fingerprint hashes
+- action results
+- timestamps
+- short-lived correlation events
+- temporary raid-session metadata
+- aggregated actor and channel activity buckets
 
-Default incident retention is 90 days. Allowed retention values are 7, 30, 90, and 180 days. Server owners can export or delete their guild data with `/guard data export` and `/guard data delete`.
+## Not Stored
 
-Data is not sold. Hosting providers may process data as necessary to operate the bot and PostgreSQL database.
+- raw message content
+- full normalized text
+- attachment URLs
+- downloaded media
+- raw link hostnames
+- usernames, nicknames, avatars, or bios
+- full member lists
 
-Contact placeholder: `privacy@example.com`.
+## Retention
+
+- incident retention follows each guild's `retentionDays`
+- correlation events expire automatically
+- raid sessions expire automatically
+- activity buckets are cleaned up by retention jobs
+
+Guild owners can export or delete guild-scoped data with `/guard data export` and `/guard data delete`.

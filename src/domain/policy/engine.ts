@@ -10,10 +10,11 @@ import type {
   EscalationStep,
   GuildSettings,
   PunishmentType,
-  TrustedActor,
-  TrustPolicy
+  TrustedActor
 } from "./types.js";
 import type { DetectionResult } from "../detection/types.js";
+
+type LegacyTrustPolicy = "NO_PUNISH" | "MONITOR_ONLY" | "FULL_BYPASS" | null;
 
 export interface PolicyEvaluationInput {
   readonly settings: GuildSettings;
@@ -25,15 +26,42 @@ export interface PolicyEvaluationInput {
   readonly escalationSteps: readonly EscalationStep[];
 }
 
+function ensureExplanation(detection: DetectionResult): ActionPlan["explanation"] {
+  return (
+    detection.explanation ?? {
+      score: detection.score ?? 0,
+      signals: detection.signals,
+      positiveTotal: detection.signals
+        .filter((signal) => signal.weight > 0)
+        .reduce((sum, signal) => sum + signal.weight, 0),
+      negativeTotal: Math.abs(
+        detection.signals
+          .filter((signal) => signal.weight < 0)
+          .reduce((sum, signal) => sum + signal.weight, 0)
+      ),
+      activityClass: "UNKNOWN",
+      channelContext: "unclassified channel",
+      correlationStage: detection.correlationStage ?? "NONE",
+      policyCaps: [],
+      finalDecision: detection.suggestedDecision ?? "ALLOW"
+    }
+  );
+}
+
 function deriveTrustPolicy(
   actor: ActorContext,
   trustedActors: readonly TrustedActor[]
-): TrustPolicy | null {
-  let selected: TrustPolicy | null = null;
+): LegacyTrustPolicy {
+  let selected: LegacyTrustPolicy = null;
 
   for (const entry of trustedActors) {
     if (entry.actorType === "BOT" && actor.actorKind === "BOT" && entry.actorId === actor.actorId) {
-      selected = entry.policy;
+      selected =
+        entry.policy === "ALLOW"
+          ? "FULL_BYPASS"
+          : entry.policy === "MONITOR"
+            ? "MONITOR_ONLY"
+            : "NO_PUNISH";
     }
 
     if (
@@ -41,18 +69,25 @@ function deriveTrustPolicy(
       actor.actorKind === "WEBHOOK" &&
       entry.actorId === actor.actorId
     ) {
-      selected = entry.policy;
+      selected =
+        entry.policy === "ALLOW"
+          ? "FULL_BYPASS"
+          : entry.policy === "MONITOR"
+            ? "MONITOR_ONLY"
+            : "NO_PUNISH";
     }
 
     if (entry.actorType === "ROLE" && actor.roleIds.includes(entry.actorId)) {
-      selected = entry.policy;
+      selected =
+        entry.policy === "ALLOW"
+          ? "FULL_BYPASS"
+          : entry.policy === "MONITOR"
+            ? "MONITOR_ONLY"
+            : "NO_PUNISH";
     }
   }
 
-  if (selected === "ALLOW") return "ALLOW";
-  if (selected === "MONITOR") return "MONITOR";
-  if (selected === "NO_PUNISH") return "NO_PUNISH";
-  return null;
+  return selected;
 }
 
 function resolveBasePunishment(settings: GuildSettings, actor: ActorContext): PunishmentType {
@@ -111,34 +146,75 @@ function resolvePunishment(
 
 export function evaluatePolicy(input: PolicyEvaluationInput): ActionPlan {
   const trustPolicy = deriveTrustPolicy(input.actor, input.trustedActors);
+  const normalizedChannelPolicy =
+    input.channelPolicy === "MONITOR"
+      ? "MONITOR_ONLY"
+      : input.channelPolicy === "DISABLED"
+        ? "IGNORE_ALL"
+        : input.channelPolicy;
 
-  if (!input.detection.detected || input.channelPolicy === "DISABLED" || trustPolicy === "ALLOW") {
+  if (
+    !input.detection.detected ||
+    normalizedChannelPolicy === "IGNORE_ALL" ||
+    trustPolicy === "FULL_BYPASS"
+  ) {
+    const explanation = ensureExplanation(input.detection);
     return {
+      decision: "ALLOW",
       shouldDelete: false,
       shouldPunish: false,
       punishmentType: "NONE",
       punishmentDurationSeconds: null,
       shouldLog: false,
+      shouldObserve: false,
       dryRun: input.settings.dryRunEnabled,
-      channelPolicy: input.channelPolicy,
-      trustPolicy
+      channelPolicy: normalizedChannelPolicy,
+      categoryPolicy: null,
+      actorPolicy: trustPolicy === "FULL_BYPASS" ? "FULL_BYPASS" : null,
+      trustPolicy:
+        trustPolicy === "FULL_BYPASS"
+          ? "ALLOW"
+          : trustPolicy === "MONITOR_ONLY"
+            ? "MONITOR"
+            : trustPolicy,
+      policyCaps: trustPolicy ? [trustPolicy.toLowerCase()] : [],
+      explanation: {
+        ...explanation,
+        finalDecision: "ALLOW",
+        policyCaps: trustPolicy ? [trustPolicy.toLowerCase()] : []
+      },
+      isConfirmedStrike: false,
+      removePunishmentOnFalsePositive: false
     };
   }
 
   if (
-    input.channelPolicy === "MONITOR" ||
-    trustPolicy === "MONITOR" ||
+    normalizedChannelPolicy === "MONITOR_ONLY" ||
+    trustPolicy === "MONITOR_ONLY" ||
     input.settings.operationMode === "MONITOR"
   ) {
+    const explanation = ensureExplanation(input.detection);
     return {
+      decision: "LOG_ONLY",
       shouldDelete: false,
       shouldPunish: false,
       punishmentType: "NONE",
       punishmentDurationSeconds: null,
       shouldLog: true,
+      shouldObserve: false,
       dryRun: input.settings.dryRunEnabled,
-      channelPolicy: input.channelPolicy,
-      trustPolicy
+      channelPolicy: normalizedChannelPolicy,
+      categoryPolicy: null,
+      actorPolicy: trustPolicy === "MONITOR_ONLY" ? "MONITOR_ONLY" : null,
+      trustPolicy: trustPolicy === "MONITOR_ONLY" ? "MONITOR" : null,
+      policyCaps: ["monitor_only"],
+      explanation: {
+        ...explanation,
+        finalDecision: "LOG_ONLY",
+        policyCaps: ["monitor_only"]
+      },
+      isConfirmedStrike: false,
+      removePunishmentOnFalsePositive: false
     };
   }
 
@@ -150,26 +226,43 @@ export function evaluatePolicy(input: PolicyEvaluationInput): ActionPlan {
   );
 
   const shouldDelete =
-    input.channelPolicy === "ENFORCE" ||
-    input.channelPolicy === "DELETE_ONLY" ||
+    normalizedChannelPolicy === "ENFORCE" ||
+    normalizedChannelPolicy === "DELETE_ONLY" ||
+    normalizedChannelPolicy === "NO_PUNISH" ||
     input.settings.operationMode === "DELETE_ONLY" ||
     input.settings.operationMode === "ENFORCE";
 
   const shouldPunish =
     !input.settings.dryRunEnabled &&
-    input.channelPolicy === "ENFORCE" &&
+    normalizedChannelPolicy === "ENFORCE" &&
     input.settings.operationMode === "ENFORCE" &&
     trustPolicy !== "NO_PUNISH" &&
     punishment.type !== "NONE";
 
+  const decision = shouldPunish ? "ENFORCE" : shouldDelete ? "DELETE_ONLY" : "LOG_ONLY";
+  const policyCaps = trustPolicy === "NO_PUNISH" ? ["no_punish"] : [];
+  const explanation = ensureExplanation(input.detection);
+
   return {
+    decision,
     shouldDelete: shouldDelete && !input.settings.dryRunEnabled,
     shouldPunish,
     punishmentType: shouldPunish ? punishment.type : "NONE",
     punishmentDurationSeconds: shouldPunish ? punishment.durationSeconds : null,
     shouldLog: true,
+    shouldObserve: false,
     dryRun: input.settings.dryRunEnabled,
-    channelPolicy: input.channelPolicy,
-    trustPolicy
+    channelPolicy: normalizedChannelPolicy,
+    categoryPolicy: null,
+    actorPolicy: trustPolicy === "NO_PUNISH" ? "NO_PUNISH" : null,
+    trustPolicy: trustPolicy === "NO_PUNISH" ? "NO_PUNISH" : null,
+    policyCaps,
+    explanation: {
+      ...explanation,
+      finalDecision: decision,
+      policyCaps
+    },
+    isConfirmedStrike: shouldPunish,
+    removePunishmentOnFalsePositive: shouldPunish
   };
 }

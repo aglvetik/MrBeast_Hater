@@ -5,12 +5,19 @@ import { and, eq, isNotNull, lte } from "drizzle-orm";
 import type { GuildSettings } from "../../../domain/policy/types.js";
 import type { DatabaseClient } from "../client.js";
 import {
+  actorActivityBucketsTable,
+  actorPoliciesTable,
+  categoryPoliciesTable,
+  channelActivityBucketsTable,
   channelPoliciesTable,
   configAuditEventsTable,
   escalationStepsTable,
   guildSettingsTable,
   incidentsTable,
   protectedRolesTable,
+  raidSessionsTable,
+  recentDetectionEventsTable,
+  roleRiskProfilesTable,
   sanctionsTable,
   trustedActorsTable
 } from "../schema.js";
@@ -24,12 +31,29 @@ export class GuildDataRepository {
       await transaction
         .delete(configAuditEventsTable)
         .where(eq(configAuditEventsTable.guildId, guildId));
+      await transaction
+        .delete(actorActivityBucketsTable)
+        .where(eq(actorActivityBucketsTable.guildId, guildId));
+      await transaction
+        .delete(channelActivityBucketsTable)
+        .where(eq(channelActivityBucketsTable.guildId, guildId));
+      await transaction
+        .delete(recentDetectionEventsTable)
+        .where(eq(recentDetectionEventsTable.guildId, guildId));
+      await transaction.delete(raidSessionsTable).where(eq(raidSessionsTable.guildId, guildId));
       await transaction.delete(incidentsTable).where(eq(incidentsTable.guildId, guildId));
       await transaction.delete(sanctionsTable).where(eq(sanctionsTable.guildId, guildId));
+      await transaction.delete(actorPoliciesTable).where(eq(actorPoliciesTable.guildId, guildId));
       await transaction.delete(trustedActorsTable).where(eq(trustedActorsTable.guildId, guildId));
+      await transaction
+        .delete(categoryPoliciesTable)
+        .where(eq(categoryPoliciesTable.guildId, guildId));
       await transaction
         .delete(channelPoliciesTable)
         .where(eq(channelPoliciesTable.guildId, guildId));
+      await transaction
+        .delete(roleRiskProfilesTable)
+        .where(eq(roleRiskProfilesTable.guildId, guildId));
       await transaction.delete(protectedRolesTable).where(eq(protectedRolesTable.guildId, guildId));
       await transaction
         .delete(escalationStepsTable)
@@ -44,8 +68,17 @@ export class GuildDataRepository {
         .delete(trustedActorsTable)
         .where(eq(trustedActorsTable.guildId, settings.guildId));
       await transaction
+        .delete(actorPoliciesTable)
+        .where(eq(actorPoliciesTable.guildId, settings.guildId));
+      await transaction
+        .delete(categoryPoliciesTable)
+        .where(eq(categoryPoliciesTable.guildId, settings.guildId));
+      await transaction
         .delete(channelPoliciesTable)
         .where(eq(channelPoliciesTable.guildId, settings.guildId));
+      await transaction
+        .delete(roleRiskProfilesTable)
+        .where(eq(roleRiskProfilesTable.guildId, settings.guildId));
       await transaction
         .delete(protectedRolesTable)
         .where(eq(protectedRolesTable.guildId, settings.guildId));

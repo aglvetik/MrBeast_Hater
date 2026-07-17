@@ -2,8 +2,11 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import type { FastifyInstance } from "fastify";
 
 import { InMemoryActorLock } from "./application/locks/inMemoryActorLock.js";
+import { BatchedActivityTracker } from "./application/services/activityTracker.js";
 import { BurstTracker } from "./application/services/burstTracker.js";
+import { CorrelationService } from "./application/services/correlationService.js";
 import { ProcessMessageService } from "./application/services/processMessageService.js";
+import { RaidSessionService } from "./application/services/raidSessionService.js";
 import { GuildSettingsCache } from "./application/services/settingsCache.js";
 import { loadEnvConfig } from "./config/env.js";
 import { createDiscordClient } from "./discord/client.js";
@@ -12,13 +15,19 @@ import { registerDiscordEventHandlers } from "./discord/events/register.js";
 import type { DiscordAppContext } from "./discord/runtime.js";
 import { createDatabaseClient, type DatabaseClient } from "./infrastructure/database/client.js";
 import {
+  ActivityRepository,
+  ActorPolicyRepository,
   AuditRepository,
+  CategoryPolicyRepository,
   ChannelPolicyRepository,
   EscalationRepository,
   GuildDataRepository,
   GuildSettingsRepository,
   IncidentRepository,
   ProtectedRoleRepository,
+  RaidSessionRepository,
+  RecentDetectionEventRepository,
+  RoleRiskProfileRepository,
   SanctionRepository,
   TrustedActorRepository
 } from "./infrastructure/database/repositories.js";
@@ -53,13 +62,22 @@ export async function bootstrap(): Promise<PingGuardRuntime> {
   const settingsRepository = new GuildSettingsRepository(database);
   const settingsCache = new GuildSettingsCache(settingsRepository);
   const protectedRoleRepository = new ProtectedRoleRepository(database);
+  const roleRiskProfileRepository = new RoleRiskProfileRepository(database);
   const channelPolicyRepository = new ChannelPolicyRepository(database);
+  const categoryPolicyRepository = new CategoryPolicyRepository(database);
   const trustedActorRepository = new TrustedActorRepository(database);
+  const actorPolicyRepository = new ActorPolicyRepository(database);
   const escalationRepository = new EscalationRepository(database);
   const incidentRepository = new IncidentRepository(database);
   const sanctionRepository = new SanctionRepository(database);
   const auditRepository = new AuditRepository(database);
   const guildDataRepository = new GuildDataRepository(database);
+  const recentDetectionEventRepository = new RecentDetectionEventRepository(database);
+  const raidSessionRepository = new RaidSessionRepository(database);
+  const activityRepository = new ActivityRepository(database);
+  const correlationService = new CorrelationService(recentDetectionEventRepository);
+  const raidSessionService = new RaidSessionService(raidSessionRepository);
+  const activityTracker = new BatchedActivityTracker(activityRepository, 30);
 
   const context: DiscordAppContext = {
     env,
@@ -71,25 +89,40 @@ export async function bootstrap(): Promise<PingGuardRuntime> {
     settingsRepository,
     settingsCache,
     protectedRoleRepository,
+    roleRiskProfileRepository,
     channelPolicyRepository,
+    categoryPolicyRepository,
     trustedActorRepository,
+    actorPolicyRepository,
     escalationRepository,
     incidentRepository,
     sanctionRepository,
     auditRepository,
     guildDataRepository,
+    recentDetectionEventRepository,
+    raidSessionRepository,
+    activityRepository,
+    correlationService,
+    raidSessionService,
+    activityTracker,
     processMessageService: new ProcessMessageService({
       settingsRepository,
       settingsCache,
       protectedRoleRepository,
+      roleRiskProfileRepository,
       channelPolicyRepository,
+      categoryPolicyRepository,
       trustedActorRepository,
+      actorPolicyRepository,
       escalationRepository,
       incidentRepository,
       sanctionRepository,
       auditRepository,
       actorLock: new InMemoryActorLock(),
       burstTracker: new BurstTracker(),
+      correlationService,
+      raidSessionService,
+      activityTracker,
       clock: systemClock
     }),
     setupSessions: new SetupSessionStore()
@@ -107,6 +140,9 @@ export async function bootstrap(): Promise<PingGuardRuntime> {
   const retentionJob = createRetentionJob({
     incidentRepository,
     guildDataRepository,
+    correlationService,
+    raidSessionService,
+    activityRepository,
     clock: systemClock,
     logger
   });
@@ -165,6 +201,7 @@ function createRuntime(
         await context.client.destroy();
       }
 
+      await context.activityTracker.stop();
       await healthServer.close();
       await database.close();
       started = false;

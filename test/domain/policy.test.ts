@@ -161,6 +161,23 @@ describe("policy engine", () => {
     expect(plan({ actor: { actorKind: "WEBHOOK" } }).shouldPunish).toBe(false);
   });
 
+  it("supports webhook allow trust and self actors without punishment", () => {
+    const trustedWebhook = plan({
+      trustedActors: [{ guildId: "100", actorId: "hook", actorType: "WEBHOOK", policy: "ALLOW" }],
+      actor: { actorKind: "WEBHOOK", actorId: "hook" }
+    });
+
+    expect(trustedWebhook.shouldDelete).toBe(false);
+    expect(trustedWebhook.trustPolicy).toBe("ALLOW");
+
+    const selfResult = plan({
+      actor: { actorKind: "SELF" }
+    });
+
+    expect(selfResult.shouldPunish).toBe(false);
+    expect(selfResult.punishmentType).toBe("NONE");
+  });
+
   it("returns no action for a non-detected result", () => {
     const result = evaluatePolicy({
       settings: settings(),
@@ -175,6 +192,33 @@ describe("policy engine", () => {
     expect(result.shouldDelete).toBe(false);
     expect(result.shouldPunish).toBe(false);
     expect(result.shouldLog).toBe(false);
+  });
+
+  it("derives fallback explanations from raw detection signals", () => {
+    const result = evaluatePolicy({
+      settings: settings(),
+      detection: {
+        ...detection,
+        explanation: undefined,
+        score: 5,
+        suggestedDecision: undefined,
+        correlationStage: undefined,
+        signals: [
+          { id: "MENTION_EVERYONE", weight: 10, explanation: "positive" },
+          { id: "MEANINGFUL_TEXT", weight: -5, explanation: "negative" }
+        ]
+      },
+      actor: actor(),
+      channelPolicy: "DISABLED",
+      trustedActors: [],
+      incidentCountWithinWindow: 1,
+      escalationSteps: []
+    });
+
+    expect(result.explanation.positiveTotal).toBe(10);
+    expect(result.explanation.negativeTotal).toBe(5);
+    expect(result.explanation.correlationStage).toBe("NONE");
+    expect(result.explanation.finalDecision).toBe("ALLOW");
   });
 
   it("uses custom escalation steps when configured", () => {
@@ -201,6 +245,25 @@ describe("policy engine", () => {
 
     expect(result.shouldPunish).toBe(true);
     expect(result.punishmentType).toBe("KICK");
+  });
+
+  it("falls back to a clamped timeout when escalation is off", () => {
+    const result = evaluatePolicy({
+      settings: settings({
+        escalationMode: "OFF",
+        memberTimeoutSeconds: 1
+      }),
+      detection,
+      actor: actor(),
+      channelPolicy: "ENFORCE",
+      trustedActors: [],
+      incidentCountWithinWindow: 1,
+      escalationSteps: []
+    });
+
+    expect(result.shouldPunish).toBe(true);
+    expect(result.punishmentType).toBe("TIMEOUT");
+    expect(result.punishmentDurationSeconds).toBe(60);
   });
 
   it("dry-run logs without destructive actions", () => {

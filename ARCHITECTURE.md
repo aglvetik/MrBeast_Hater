@@ -1,21 +1,49 @@
 # Architecture
 
-PingGuard uses a small ports-and-adapters architecture.
+PingGuard uses a small ports-and-adapters structure with the Discord API isolated at the edge.
 
-Message flow:
+## Hot Path
 
-1. Discord `messageCreate`.
-2. Discord mapper creates an `ObservedMessage` and `ActorContext`.
-3. Pure detection code classifies protected mentions, visual media, normalized text, and burst state.
-4. Policy code applies guild settings, channel policy, trust policy, actor kind, dry-run, and escalation.
-5. Application service coordinates delete, punishment, incident persistence, and mod-log actions independently.
-6. Discord adapters execute moderation and presentation work.
+```text
+messageCreate / messageUpdate
+-> Discord mapper
+-> base visual mass-ping analyzer
+-> fingerprinting
+-> correlation lookup
+-> activity profile lookup
+-> weighted risk scoring
+-> action caps and policy precedence
+-> incident reservation
+-> delete / punish / mod-log adapters
+-> incident finalization
+-> short-lived correlation event + raid session update
+```
 
-The domain layer does not import `discord.js`. PostgreSQL is the source of truth. The in-memory settings cache is a 60-second optimization and can be replaced later for sharding. Actor locks are process-local in v2; future multi-process deployments should replace them with Redis or PostgreSQL advisory locks.
+## Layers
 
-Rejected alternatives:
+- `src/domain/detection/*`
+  Pure scoring, fingerprints, correlation interpretation, text/media normalization.
+- `src/domain/policy/*`
+  Policy precedence, actor/channel/category caps, escalation decisions.
+- `src/application/services/*`
+  Orchestration, idempotency, activity batching, correlation, raid sessions.
+- `src/discord/*`
+  Mapping, slash commands, component handlers, Discord moderation adapter, presentation.
+- `src/infrastructure/database/*`
+  Drizzle schema, repositories, migrations, retention cleanup.
 
-- SQLite: not suitable for one public multi-guild bot.
-- Guild member fetches for role coverage: not available without Guild Members Intent and not reliable for hot-path detection.
-- Automatic admin/owner bypass: compromised privileged accounts must still be scanned.
-- Web dashboard: intentionally out of scope for v2.
+## Key Design Decisions
+
+- Detection is separate from punishment.
+- A suspicious first event can be contained without a long strike.
+- Correlation is short-lived and privacy-safe.
+- Explicit bypass and no-punish rules are configured, never inferred from Discord admin status.
+- False positives are excluded from future escalation counts.
+
+## Current Single-Process Assumptions
+
+- actor lock is process-local
+- activity batching is process-local
+- correlation and raid persistence are PostgreSQL-backed, but locking is not yet distributed
+
+Before multi-process or sharded deployment, replace the local actor lock and local batching coordination with a distributed mechanism.

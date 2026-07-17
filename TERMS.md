@@ -1,9 +1,10 @@
 # Terms of Service
 
-PingGuard is a free Discord moderation bot for detecting visual mass-ping spam.
+PingGuard is a deterministic Discord moderation bot for containing visual mass-ping abuse.
 
-Server owners and administrators are responsible for configuration decisions, moderation policies, and compliance with Discord rules and local law.
+- Server owners and administrators are responsible for how they configure scoped publishers, exceptions, punishments, and retention.
+- PingGuard may delete content, apply timeouts, and log incidents when its configured rules match.
+- False positives can happen; moderators are expected to review incident logs and use the correction actions when needed.
+- Guild-wide `FULL_BYPASS` is intentionally high-risk and should be used only when the owner accepts that a compromised account could bypass protection.
 
-PingGuard may delete messages and apply configured punishments when its deterministic rules match. It is provided without warranty.
-
-Do not use PingGuard to harass users, evade Discord restrictions, or process data you are not authorized to moderate.
+PingGuard is provided as-is, without warranty.

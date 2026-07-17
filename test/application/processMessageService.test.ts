@@ -3,15 +3,18 @@ import { describe, expect, it } from "vitest";
 import { InMemoryActorLock } from "../../src/application/locks/inMemoryActorLock.js";
 import { BurstTracker } from "../../src/application/services/burstTracker.js";
 import type { ActionResult } from "../../src/application/services/actionTypes.js";
+import type { CorrelationService } from "../../src/application/services/correlationService.js";
 import {
   ProcessMessageService,
   type ModerationAdapter
 } from "../../src/application/services/processMessageService.js";
+import type { RaidSessionService } from "../../src/application/services/raidSessionService.js";
 import type { GuildSettingsCache } from "../../src/application/services/settingsCache.js";
 import { buildDefaultGuildSettings } from "../../src/config/constants.js";
 import type { ObservedMessage } from "../../src/domain/detection/types.js";
 import type {
   ActorContext,
+  EscalationStep,
   GuildSettings,
   ProtectedRole,
   TrustedActor
@@ -87,6 +90,15 @@ function service(
     readonly activeSanctionId?: string;
     readonly protectedRoles?: readonly ProtectedRole[];
     readonly trustedActors?: readonly TrustedActor[];
+    readonly correlationStage?: "FIRST" | "CONFIRMED";
+    readonly triggeredSignals?: readonly (
+      | "SAME_ACTOR_EXACT_FINGERPRINT"
+      | "SAME_ACTOR_STRUCTURAL_FINGERPRINT"
+      | "SECOND_EVENT_OTHER_CHANNEL"
+    )[];
+    readonly escalationSteps?: readonly EscalationStep[];
+    readonly confirmedCountResolver?: (since: Date) => number;
+    readonly clockNow?: Date;
   } = {}
 ): {
   readonly sanctions: unknown[];
@@ -125,11 +137,24 @@ function service(
         }
       } as unknown as TrustedActorRepository,
       escalationRepository: {
-        listByGuildId(): Promise<[]> {
-          return Promise.resolve([]);
+        listByGuildId(): Promise<readonly EscalationStep[]> {
+          return Promise.resolve(options.escalationSteps ?? []);
         }
       } as unknown as EscalationRepository,
       incidentRepository: {
+        countConfirmedByActorWithinWindow(
+          _guildId: string,
+          _actorId: string,
+          since: Date
+        ): Promise<number> {
+          return Promise.resolve(
+            options.confirmedCountResolver
+              ? options.confirmedCountResolver(since)
+              : options.correlationStage === "CONFIRMED"
+                ? 1
+                : 0
+          );
+        },
         countRecentByActor(): Promise<number> {
           return Promise.resolve(0);
         },
@@ -157,13 +182,53 @@ function service(
       } as unknown as AuditRepository,
       actorLock: new InMemoryActorLock(),
       burstTracker: new BurstTracker(),
-      clock: systemClock
+      correlationService: {
+        summarize(payload: Parameters<CorrelationService["summarize"]>[0]) {
+          return Promise.resolve({
+            current: {
+              ...payload,
+              id: "corr-1"
+            },
+            summary: {
+              stage: options.correlationStage ?? "FIRST",
+              relatedEvents: [],
+              coordinatedActorIds: [],
+              triggeredSignals: [...(options.triggeredSignals ?? [])]
+            }
+          });
+        },
+        record(): Promise<void> {
+          return Promise.resolve();
+        },
+        deleteExpired(): Promise<number> {
+          return Promise.resolve(0);
+        }
+      } as unknown as CorrelationService,
+      raidSessionService: {
+        findMatching(): Promise<null> {
+          return Promise.resolve(null);
+        },
+        absorbEvent(): Promise<null> {
+          return Promise.resolve(null);
+        },
+        stopGuildSessions(): Promise<void> {
+          return Promise.resolve();
+        },
+        deleteExpired(): Promise<number> {
+          return Promise.resolve(0);
+        }
+      } as unknown as RaidSessionService,
+      clock: {
+        now(): Date {
+          return options.clockNow ?? systemClock.now();
+        }
+      }
     })
   };
 }
 
 describe("ProcessMessageService", () => {
-  it("detects a message and runs independent actions", async () => {
+  it("deletes and logs a first suspicious event without punishing", async () => {
     const settings = {
       ...buildDefaultGuildSettings("100"),
       enabled: true,
@@ -179,11 +244,11 @@ describe("ProcessMessageService", () => {
     });
 
     expect(outcome?.results.delete.status).toBe("SUCCESS");
-    expect(outcome?.results.punishment.status).toBe("SUCCESS");
+    expect(outcome?.results.punishment.status).toBe("SKIPPED");
     expect(outcome?.results.modLog.status).toBe("SUCCESS");
-    expect(calls).toEqual(["delete", "punish", "log"]);
+    expect(calls).toEqual(["delete", "log"]);
     expect(harness.incidents).toHaveLength(1);
-    expect(harness.sanctions).toHaveLength(1);
+    expect(harness.sanctions).toHaveLength(0);
     expect(harness.audits).toHaveLength(1);
   });
 
@@ -242,12 +307,14 @@ describe("ProcessMessageService", () => {
     expect(harness.sanctions).toHaveLength(0);
   });
 
-  it("skips equivalent punishment when a sanction cooldown is active", async () => {
+  it("skips equivalent punishment when a confirmed repeat hits an active sanction cooldown", async () => {
     const calls: string[] = [];
     const harness = service(
       { ...buildDefaultGuildSettings("100"), enabled: true },
       {
-        activeSanctionId: "existing-sanction"
+        activeSanctionId: "existing-sanction",
+        correlationStage: "CONFIRMED",
+        triggeredSignals: ["SAME_ACTOR_EXACT_FINGERPRINT"]
       }
     );
 
@@ -263,9 +330,15 @@ describe("ProcessMessageService", () => {
     expect(harness.sanctions).toHaveLength(0);
   });
 
-  it("keeps actions independent when delete fails and punishment succeeds", async () => {
+  it("keeps actions independent when delete fails and confirmed-repeat punishment succeeds", async () => {
     const calls: string[] = [];
-    const harness = service({ ...buildDefaultGuildSettings("100"), enabled: true });
+    const harness = service(
+      { ...buildDefaultGuildSettings("100"), enabled: true },
+      {
+        correlationStage: "CONFIRMED",
+        triggeredSignals: ["SAME_ACTOR_EXACT_FINGERPRINT"]
+      }
+    );
 
     const outcome = await harness.instance.process({
       observedMessage: observedMessage(),
@@ -285,7 +358,7 @@ describe("ProcessMessageService", () => {
     expect(calls).toEqual(["delete", "punish", "log"]);
   });
 
-  it("does not send a mod log for duplicate incidents", async () => {
+  it("deduplicates before destructive actions for duplicate incidents", async () => {
     const settings = { ...buildDefaultGuildSettings("100"), enabled: true };
     const calls: string[] = [];
     const harness = service(settings, { inserted: false });
@@ -297,7 +370,7 @@ describe("ProcessMessageService", () => {
     });
 
     expect(outcome?.results.persistence.code).toBe("duplicate_incident");
-    expect(calls).toEqual(["delete", "punish"]);
+    expect(calls).toEqual([]);
   });
 
   it("returns null when detection does not match", async () => {
@@ -354,5 +427,51 @@ describe("ProcessMessageService", () => {
     expect(outcome).toBeNull();
     expect(calls).toEqual([]);
     expect(harness.incidents).toHaveLength(0);
+  });
+
+  it("uses each custom escalation step window when choosing confirmed punishment", async () => {
+    const now = new Date("2026-07-17T12:00:00.000Z");
+    const settings: GuildSettings = {
+      ...buildDefaultGuildSettings("100"),
+      enabled: true,
+      escalationMode: "CUSTOM"
+    };
+    const harness = service(settings, {
+      correlationStage: "CONFIRMED",
+      triggeredSignals: ["SAME_ACTOR_EXACT_FINGERPRINT"],
+      clockNow: now,
+      escalationSteps: [
+        {
+          id: "step-1",
+          guildId: "100",
+          orderIndex: 0,
+          thresholdCount: 2,
+          windowDays: 1,
+          punishmentType: "TIMEOUT",
+          durationSeconds: 60,
+          enabled: true
+        },
+        {
+          id: "step-2",
+          guildId: "100",
+          orderIndex: 1,
+          thresholdCount: 2,
+          windowDays: 30,
+          punishmentType: "KICK",
+          durationSeconds: null,
+          enabled: true
+        }
+      ],
+      confirmedCountResolver: (since) =>
+        since.getTime() >= now.getTime() - 2 * 24 * 60 * 60 * 1_000 ? 0 : 1
+    });
+
+    const outcome = await harness.instance.process({
+      observedMessage: observedMessage(),
+      actor: actor(),
+      adapterFactory: () => adapter([])
+    });
+
+    expect(outcome?.plan.punishmentType).toBe("KICK");
   });
 });

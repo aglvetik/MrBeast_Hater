@@ -22,6 +22,26 @@ function classifyAttachment(attachment: VisualAttachment): "IMAGE" | "GIF" | "VI
   return "NONE";
 }
 
+function normalizeExtension(fileName: string | null): string {
+  if (!fileName) {
+    return "unknown";
+  }
+
+  const match = /\.[a-z0-9]+$/iu.exec(fileName.toLowerCase());
+  return match?.[0] ?? "unknown";
+}
+
+function sizeBucket(sizeBytes: number | null): string {
+  if (sizeBytes === null || Number.isNaN(sizeBytes)) {
+    return "unknown";
+  }
+
+  if (sizeBytes < 256_000) return "lt_256kb";
+  if (sizeBytes < 1_000_000) return "lt_1mb";
+  if (sizeBytes < 5_000_000) return "lt_5mb";
+  return "gte_5mb";
+}
+
 export function summarizeMedia(
   attachments: readonly VisualAttachment[],
   embeds: readonly EmbedSummary[],
@@ -30,8 +50,13 @@ export function summarizeMedia(
   let imageAttachments = 0;
   let gifAttachments = 0;
   let videoAttachments = 0;
+  const extensionSummary = new Set<string>();
+  const sizeBucketSummary = new Set<string>();
 
   for (const attachment of attachments) {
+    extensionSummary.add(normalizeExtension(attachment.fileName));
+    sizeBucketSummary.add(sizeBucket(attachment.sizeBytes ?? null));
+
     switch (classifyAttachment(attachment)) {
       case "IMAGE":
         imageAttachments += 1;

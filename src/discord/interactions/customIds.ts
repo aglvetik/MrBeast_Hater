@@ -69,7 +69,14 @@ export function parseIncidentActionCustomId(customId: string): {
     !guildId ||
     !incidentId ||
     !channelId ||
-    !["remove-timeout", "false-positive", "open-settings", "delete-only"].includes(action)
+    ![
+      "remove-timeout",
+      "false-positive",
+      "open-settings",
+      "allow-user-channel",
+      "no-punish-user",
+      "ignore-channel"
+    ].includes(action)
   ) {
     return null;
   }

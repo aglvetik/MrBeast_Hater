@@ -1,89 +1,57 @@
 # PingGuard
 
-PingGuard — бесплатный Discord-бот для защиты серверов от визуального спама с массовыми пингами. Он ищет сообщения, где `@everyone`, `@here` или защищенная роль сочетаются с картинками, GIF, видео, стикерами или embed-изображениями и почти без осмысленного текста.
+PingGuard - это Discord-бот для сдерживания визуальных mass-ping атак. Он рассчитан на ситуацию, когда легитимный анонс и первое сообщение атаки выглядят почти одинаково:
 
-Пример угрозы: взломанный аккаунт отправляет массовый пинг с картинкой про розыгрыш и без нормального объяснения. PingGuard может удалить сообщение, применить настроенное наказание, сохранить инцидент и отправить безопасный модераторский лог.
-
-## Возможности
-
-- Один публичный Discord-бот для многих серверов.
-- Настройка через `/guard` и компоненты Discord.
-- Отдельные настройки, роли, политики каналов, доверенные акторы, инциденты и аудит для каждого сервера.
-- PostgreSQL и Drizzle ORM.
-- Проверка обычных пользователей, других ботов и вебхуков; игнорируются только собственные сообщения PingGuard.
-- Нет автоматического обхода для владельца сервера или администраторов.
-- Нет AI, OCR, скачивания вложений и хранения текста сообщений.
-- Развертывание через Docker Compose.
-
-## Что не входит в v2
-
-- Веб-панель.
-- Redis и преждевременный шард manager.
-- Автоматическое определение безопасных анонс-каналов.
-- SQLite в production.
-
-## Права и intents
-
-PingGuard не требует Administrator.
-
-Минимальные intents:
-
-- Guilds
-- Guild Messages
-- Message Content
-
-В Discord Developer Portal включите Message Content Intent. Server Members Intent не нужен.
-
-Права бота зависят от политики:
-
-- View Channels
-- Read Message History
-- Send Messages и Embed Links в канале мод-лога
-- Manage Messages
-- Moderate Members для таймаутов
-- Kick Members или Ban Members только если вы явно включили такие наказания
-
-## Локальный запуск
-
-Нужен Node.js 24 LTS.
-
-```bash
-npm ci
-cp .env.example .env
-npm run db:migrate
-npm run commands:dev
-npm run dev
+```text
+@everyone или @here
++ картинка / GIF / видео / стикер / embed image
++ мало или совсем нет осмысленного текста
 ```
 
-## Тесты
+Главное изменение:
 
-```bash
-npm test
-npm run test:coverage
-```
+- первое подозрительное сообщение обычно удаляется без долгого наказания;
+- повторное коррелированное сообщение быстро подтверждает атаку;
+- разрешенные издатели задаются по области действия, а не глобально;
+- явные исключения всегда имеют приоритет.
 
-Тесты используют моки и фейковые адаптеры. Они не заходят в Discord и не требуют настоящего токена.
+## Поведение по умолчанию
 
-## Docker
+Preset `BALANCED`:
 
-```bash
-cp .env.example .env
-docker compose up -d --build
-```
+- первое подозрительное сообщение обычного участника: `DELETE_ONLY`
+- первое сообщение разрешенного издателя в нужном месте: `ALLOW` + краткоживущий candidate
+- второе коррелированное сообщение: `ENFORCE`
+- при активной raid session похожие сообщения усиливаются, но `IGNORE_ALL`, `MONITOR_ONLY`, `NO_PUNISH` и `FULL_BYPASS` продолжают ограничивать действия
 
-PostgreSQL находится только во внутренней сети Compose. Caddy отдает статический сайт и проксирует health endpoints.
+## Основные команды
+
+- `/guard setup`
+- `/guard status`
+- `/guard publishers add|remove|list`
+- `/guard exceptions add|remove|list`
+- `/guard channels set|remove|list`
+- `/guard roles add|remove|list|mode|risk`
+- `/guard detection preset|first-strike|thresholds`
+- `/guard raid status|stop`
+- `/guard incidents recent|user|explain|stats`
 
 ## Конфиденциальность
 
-PingGuard хранит только Discord ID и метаданные инцидентов. Он не хранит текст сообщений, нормализованный текст, имена пользователей, аватары, URL вложений, URL embed, изображения, видео, GIF, стикеры или списки участников.
+PingGuard не хранит:
 
-Владелец сервера может выполнить `/guard data export` или `/guard data delete`.
+- исходный текст сообщений
+- normalized text
+- URL вложений
+- скачанные изображения и видео
 
-## Поддержка
+PingGuard хранит:
 
-- Сервер поддержки: `https://discord.gg/your-support-server`
-- GitHub: `https://github.com/aglvetik/MrBeast_Hater`
+- Discord ID
+- классы упоминаний
+- hashes / fingerprints
+- результаты действий модерации
+- временные correlation / raid записи
+- агрегированные activity buckets
 
-## Лицензия
-
-MIT. См. [LICENSE](LICENSE).
+Подробности: [PRIVACY.md](PRIVACY.md)

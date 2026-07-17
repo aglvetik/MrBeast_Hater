@@ -6,6 +6,7 @@ import type {
   ChatInputCommandInteraction,
   Interaction,
   Message,
+  PartialMessage,
   MessageContextMenuCommandInteraction,
   RoleSelectMenuInteraction,
   StringSelectMenuInteraction
@@ -73,6 +74,78 @@ function isSupportedInteraction(interaction: Interaction): interaction is Suppor
 }
 
 async function handleMessageCreate(context: DiscordAppContext, message: Message): Promise<void> {
+  await handleMappedMessage(context, message, "CREATE");
+}
+
+function attachmentSignature(message: Message): string {
+  return [...message.attachments.values()]
+    .map(
+      (attachment) =>
+        `${attachment.name ?? "unknown"}:${attachment.contentType ?? "unknown"}:${attachment.size ?? 0}`
+    )
+    .sort()
+    .join("|");
+}
+
+function embedSignature(message: Message): string {
+  return message.embeds
+    .map((embed) => `${Boolean(embed.image)}:${Boolean(embed.thumbnail)}`)
+    .join("|");
+}
+
+function hasRelevantFeatureChange(
+  previousMessage: Message | PartialMessage,
+  currentMessage: Message
+): boolean {
+  if (previousMessage.partial) {
+    return true;
+  }
+
+  return (
+    previousMessage.content !== currentMessage.content ||
+    previousMessage.mentions.everyone !== currentMessage.mentions.everyone ||
+    [...previousMessage.mentions.roles.keys()].join(",") !==
+      [...currentMessage.mentions.roles.keys()].join(",") ||
+    previousMessage.stickers.size !== currentMessage.stickers.size ||
+    attachmentSignature(previousMessage) !== attachmentSignature(currentMessage) ||
+    embedSignature(previousMessage) !== embedSignature(currentMessage)
+  );
+}
+
+async function resolveUpdatedMessage(message: Message | PartialMessage): Promise<Message | null> {
+  if (!message.partial) {
+    return message;
+  }
+
+  return message.fetch().catch(() => null);
+}
+
+async function handleMessageUpdate(
+  context: DiscordAppContext,
+  previousMessage: Message | PartialMessage,
+  nextMessage: Message | PartialMessage
+): Promise<void> {
+  if (!nextMessage.inGuild()) {
+    return;
+  }
+
+  const resolved = await resolveUpdatedMessage(nextMessage);
+  if (!resolved || !resolved.inGuild()) {
+    return;
+  }
+
+  if (!hasRelevantFeatureChange(previousMessage, resolved)) {
+    return;
+  }
+
+  await handleMappedMessage(context, resolved, "UPDATE");
+}
+
+async function handleMappedMessage(
+  context: DiscordAppContext,
+  message: Message,
+  eventSource: "CREATE" | "UPDATE"
+): Promise<void> {
   if (!message.inGuild()) {
     return;
   }
@@ -84,7 +157,7 @@ async function handleMessageCreate(context: DiscordAppContext, message: Message)
 
   context.metrics.recordMessageScanned();
 
-  const mapped = mapDiscordMessage(message, selfUserId);
+  const mapped = mapDiscordMessage(message, selfUserId, eventSource);
   if (mapped.actor.actorKind === "SELF") {
     return;
   }
@@ -207,6 +280,10 @@ export function registerDiscordEventHandlers(context: DiscordAppContext): void {
         "Interaction handler failed"
       );
     });
+  });
+
+  context.client.on("messageUpdate", (previousMessage, nextMessage) => {
+    void handleMessageUpdate(context, previousMessage, nextMessage);
   });
 
   context.client.on("guildDelete", (guild) => {

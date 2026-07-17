@@ -12,12 +12,15 @@ import type { ModLogPayload } from "../../application/services/processMessageSer
 
 export interface PresentedModLog {
   readonly embeds: [EmbedBuilder];
-  readonly components: readonly [ActionRowBuilder<ButtonBuilder>];
+  readonly components: readonly ActionRowBuilder<ButtonBuilder>[];
   readonly allowedMentions: MessageMentionOptions;
 }
 
 function summarizeSignals(payload: ModLogPayload): string {
-  return payload.detection.signals.map((signal) => signal.kind).join(", ") || "none";
+  return (
+    payload.detection.signals.map((signal) => `${signal.id} (${signal.weight})`).join(", ") ||
+    "none"
+  );
 }
 
 function summarizeMentions(payload: ModLogPayload): string {
@@ -36,17 +39,13 @@ function summarizeMentions(payload: ModLogPayload): string {
 }
 
 function describeAction(payload: ModLogPayload): string {
-  if (!payload.plan.shouldDelete && !payload.plan.shouldPunish) {
-    return payload.plan.dryRun ? "dry-run monitor" : "monitor";
+  if (payload.plan.decision === "QUARANTINE" || payload.plan.decision === "ENFORCE") {
+    return payload.plan.punishmentDurationSeconds !== null
+      ? `${payload.plan.decision.toLowerCase()} ${payload.plan.punishmentType.toLowerCase()} ${payload.plan.punishmentDurationSeconds}s`
+      : `${payload.plan.decision.toLowerCase()} ${payload.plan.punishmentType.toLowerCase()}`;
   }
 
-  if (payload.plan.shouldDelete && !payload.plan.shouldPunish) {
-    return "delete only";
-  }
-
-  return payload.plan.punishmentDurationSeconds !== null
-    ? `${payload.plan.punishmentType.toLowerCase()} ${payload.plan.punishmentDurationSeconds}s`
-    : payload.plan.punishmentType.toLowerCase();
+  return payload.plan.decision.toLowerCase();
 }
 
 function actorProfileLink(payload: ModLogPayload): string {
@@ -54,7 +53,13 @@ function actorProfileLink(payload: ModLogPayload): string {
 }
 
 function actionButtonId(
-  action: "remove-timeout" | "false-positive" | "open-settings" | "delete-only",
+  action:
+    | "remove-timeout"
+    | "false-positive"
+    | "open-settings"
+    | "allow-user-channel"
+    | "no-punish-user"
+    | "ignore-channel",
   payload: ModLogPayload
 ): string {
   return `pingguard:${action}:${payload.observedMessage.guildId}:${payload.incidentId}:${payload.observedMessage.channelId}`;
@@ -69,7 +74,9 @@ export function presentModLog(payload: ModLogPayload): PresentedModLog {
         `Actor: ${actorProfileLink(payload)} (${payload.actor.actorKind})`,
         `Channel: <#${payload.observedMessage.channelId}>`,
         `Rule: ${payload.detection.ruleId ?? "none"} (${payload.detection.confidence})`,
-        `Requested action: ${describeAction(payload)}`
+        `Decision: ${describeAction(payload)}`,
+        `Score: ${payload.plan.explanation.score}`,
+        `Correlation: ${payload.plan.explanation.correlationStage}`
       ].join("\n")
     )
     .addFields(
@@ -95,6 +102,21 @@ export function presentModLog(payload: ModLogPayload): PresentedModLog {
         inline: false
       },
       {
+        name: "Publisher / exemptions",
+        value: payload.plan.actorPolicy ?? "none",
+        inline: true
+      },
+      {
+        name: "Channel policy",
+        value: payload.plan.channelPolicy,
+        inline: true
+      },
+      {
+        name: "Activity",
+        value: payload.plan.explanation.activityClass,
+        inline: true
+      },
+      {
         name: "Delete result",
         value: `${payload.results.delete.status}: ${payload.results.delete.code}`,
         inline: true
@@ -105,13 +127,13 @@ export function presentModLog(payload: ModLogPayload): PresentedModLog {
         inline: true
       },
       {
-        name: "Previous incidents",
-        value: `${payload.previousIncidentCount}`,
+        name: "Policy caps",
+        value: payload.plan.policyCaps.join(", ") || "none",
         inline: true
       },
       {
-        name: "Dry run",
-        value: payload.plan.dryRun ? "yes" : "no",
+        name: "Previous incidents",
+        value: `${payload.previousIncidentCount}`,
         inline: true
       }
     )
@@ -127,18 +149,29 @@ export function presentModLog(payload: ModLogPayload): PresentedModLog {
       .setLabel("Mark false positive")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
+      .setCustomId(actionButtonId("allow-user-channel", payload))
+      .setLabel("Allow user here")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(actionButtonId("no-punish-user", payload))
+      .setLabel("No-punish here")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(actionButtonId("ignore-channel", payload))
+      .setLabel("Ignore channel")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  const settingsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
       .setCustomId(actionButtonId("open-settings", payload))
       .setLabel("Open settings")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(actionButtonId("delete-only", payload))
-      .setLabel("Set channel DELETE_ONLY")
-      .setStyle(ButtonStyle.Danger)
+      .setStyle(ButtonStyle.Primary)
   );
 
   return {
     embeds: [embed],
-    components: [row],
+    components: [row, settingsRow],
     allowedMentions: ALLOWED_MENTIONS
   };
 }

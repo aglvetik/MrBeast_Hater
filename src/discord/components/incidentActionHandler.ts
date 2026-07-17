@@ -45,7 +45,15 @@ export async function handleIncidentActionButton(
       }
     );
     context.metrics.recordFalsePositive();
-    await interaction.reply(ephemeral("Incident marked as false positive."));
+    const member = await interaction.guild.members.fetch(incident.actorId).catch(() => null);
+    if (member) {
+      await member
+        .timeout(null, `PingGuard false-positive correction for incident ${parsed.incidentId}`)
+        .catch(() => null);
+    }
+    await interaction.reply(
+      ephemeral("Incident marked as false positive and active timeout removal was attempted.")
+    );
     return true;
   }
 
@@ -59,7 +67,45 @@ export async function handleIncidentActionButton(
     return true;
   }
 
-  if (parsed.action === "delete-only") {
+  if (parsed.action === "allow-user-channel" || parsed.action === "no-punish-user") {
+    await context.actorPolicyRepository.upsert({
+      id: `${interaction.guildId}:${incident.actorId}:${parsed.channelId}:${parsed.action}`,
+      guildId: interaction.guildId,
+      targetId: incident.actorId,
+      targetType:
+        incident.actorKind === "BOT"
+          ? "BOT"
+          : incident.actorKind === "WEBHOOK"
+            ? "WEBHOOK"
+            : "USER",
+      policy: parsed.action === "allow-user-channel" ? "SCOPED_PUBLISHER" : "NO_PUNISH",
+      scopeType: "CHANNEL",
+      scopeId: parsed.channelId,
+      expiresAt: null,
+      createdAt: context.clock.now(),
+      updatedAt: context.clock.now()
+    });
+    await context.auditRepository.append(
+      interaction.guildId,
+      interaction.user.id,
+      parsed.action === "allow-user-channel" ? "publisher_added" : "actor_no_punish_added",
+      {
+        incidentId: parsed.incidentId,
+        actorId: incident.actorId,
+        channelId: parsed.channelId
+      }
+    );
+    await interaction.reply(
+      ephemeral(
+        parsed.action === "allow-user-channel"
+          ? `Allowed ${incident.actorId} in <#${parsed.channelId}>.`
+          : `Added a no-punish rule for ${incident.actorId} in <#${parsed.channelId}>.`
+      )
+    );
+    return true;
+  }
+
+  if (parsed.action === "ignore-channel") {
     if (incident.channelId !== parsed.channelId) {
       await interaction.reply(ephemeral("Incident channel mismatch."));
       return true;
@@ -68,7 +114,7 @@ export async function handleIncidentActionButton(
     await context.channelPolicyRepository.upsert(
       interaction.guildId,
       parsed.channelId,
-      "DELETE_ONLY"
+      "IGNORE_ALL"
     );
     await context.auditRepository.append(
       interaction.guildId,
@@ -76,10 +122,10 @@ export async function handleIncidentActionButton(
       "channel_policy_set",
       {
         channelId: parsed.channelId,
-        policy: "DELETE_ONLY"
+        policy: "IGNORE_ALL"
       }
     );
-    await interaction.reply(ephemeral(`Channel <#${parsed.channelId}> set to DELETE_ONLY.`));
+    await interaction.reply(ephemeral(`Channel <#${parsed.channelId}> is now ignored.`));
     return true;
   }
 

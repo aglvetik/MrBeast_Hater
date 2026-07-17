@@ -1,114 +1,86 @@
 # Technical Notes
 
-PingGuard v2 is a TypeScript, PostgreSQL, and Discord.js v14 rebuild of the earlier prototype.
+## Detection Model
 
-## Architecture
+PingGuard now builds two privacy-safe fingerprints:
 
-The code follows a small ports-and-adapters structure:
+- exact fingerprint
+- structural fingerprint
 
-```text
-Discord messageCreate
--> Discord message mapper
--> pure detection engine
--> policy engine
--> application action service
--> Discord moderation adapter
--> incident repository
--> mod-log presenter
-```
+Inputs include:
 
-Domain detection and policy modules do not import `discord.js`. PostgreSQL is the source of truth, with a short in-memory settings cache used only as an optimization.
+- protected mention class
+- normalized text hash
+- media classes
+- role risk level
+- link hostname hashes
+- visual count
 
-## Detection
+No attachment download or URL fetch is required.
 
-The detector is deterministic. It classifies:
+## Risk Model
 
-- `@everyone`, `@here`, and protected role mentions;
-- image, GIF, video, embed image, embed thumbnail, and sticker counts;
-- normalized low-information text;
-- short burst windows.
+The weighted score uses named signals such as:
 
-It never downloads attachments, fetches message URLs, stores raw content, or stores attachment URLs.
+- mention severity
+- low-information visual-only structure
+- unauthorized scope
+- new account / recent join
+- low activity after warmup
+- quiet or restricted channel context
+- exact or structural repeat
+- adjacent-channel movement
+- coordinated multi-actor match
+- active raid-session match
 
-## Role Detection
+Thresholds map to:
 
-v2 intentionally does not calculate role coverage from guild member lists. The runtime does not request Guild Members Intent and does not fetch full guild member lists.
-
-Role detection modes are:
-
-- `MANUAL`: `@everyone`, `@here`, and roles configured in `protected_roles`.
-- `ALL_ROLES`: any actual role mention, with a false-positive warning.
-
-## Channel And Trust Policies
-
-Channel policies are explicit per guild and channel:
-
-- `ENFORCE`: detect, delete, punish, log.
-- `DELETE_ONLY`: detect, delete, log.
-- `MONITOR`: detect and log only.
-- `DISABLED`: ignore that channel.
-
-Trust policies are explicit database rows for roles, bot IDs, or webhook IDs:
-
-- `NO_PUNISH`
-- `MONITOR`
 - `ALLOW`
+- `OBSERVE`
+- `LOG_ONLY`
+- `DELETE_ONLY`
+- `QUARANTINE`
+- `ENFORCE`
 
-There is no automatic safe announcement-channel bypass in v2.
+Thresholds do not bypass policy caps.
 
-## Database
+## Policy Precedence
 
-Drizzle migrations live in `drizzle/`. Guild-owned repositories require `guildId` and store Discord snowflakes as `varchar(20)`.
+Order of effect:
 
-The schema includes:
+1. explicit channel or category `IGNORE_ALL`
+2. explicit actor `FULL_BYPASS`
+3. monitor-only / no-punish caps
+4. first-event caps
+5. repeat / raid-session escalation
+
+## Persistence
+
+Important tables now include:
 
 - `guild_settings`
-- `protected_roles`
 - `channel_policies`
-- `trusted_actors`
+- `category_policies`
+- `actor_policies`
+- `role_risk_profiles`
 - `incidents`
-- `sanctions`
-- `escalation_steps`
-- `config_audit_events`
+- `recent_detection_events`
+- `raid_sessions`
+- `actor_activity_buckets`
+- `channel_activity_buckets`
 
-The incident table has a unique `(guild_id, message_id)` constraint. Raw message content, normalized text, usernames, avatars, attachment URLs, embed URLs, images, and full member lists are not schema fields.
+Incidents are reserved before destructive actions using a message-signature-aware uniqueness model, then finalized with real action results after Discord and persistence work completes.
 
-## Concurrency And Idempotency
+## Message Updates
 
-The application service uses a process-local lock keyed by `guildId:actorId`, a unique incident constraint, and a per-guild sanction cooldown. This is suitable for one VPS process. Future sharding should replace the process-local lock with PostgreSQL advisory locks or Redis without changing domain logic.
+`messageUpdate` is processed when detection-relevant fields change. Duplicate update events are deduplicated by event source plus message signature hash.
 
-Setup completion and full guild deletion use guild-scoped database transactions.
+## Retention
 
-## Health And Metrics
+Retention cleanup removes:
 
-Fastify serves:
-
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /metrics`
-
-Metrics avoid guild, channel, user, and message ID labels. `/metrics` should use `METRICS_TOKEN` unless bound to an internal interface.
-
-## Testing
-
-Vitest is the active test runner. Tests use fake adapters and mocked inputs, not a live Discord client. Property tests use `fast-check` for normalization behavior.
-
-Primary commands:
-
-```bash
-npm run format:check
-npm run lint
-npm run typecheck
-npm run test:coverage
-npm run build
-```
-
-## Docker
-
-The Dockerfile is multi-stage, pinned to Node.js 24, runs production dependencies only in the runtime image, and uses a non-root user. Compose runs `bot`, `postgres`, and `caddy`; PostgreSQL has no public host port by default.
-
-## Known Limitations
-
-- Integration tests that require a real PostgreSQL instance are intended for CI/service-container environments.
-- The first visible Discord ping can appear briefly because bots moderate after `messageCreate`.
-- Sharding is designed for later but not enabled in v2.
+- expired incidents according to per-guild retention
+- expired correlation events
+- expired raid sessions
+- old activity buckets
+- guild data after deletion grace windows

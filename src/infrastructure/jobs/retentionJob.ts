@@ -1,6 +1,12 @@
 import type pino from "pino";
 
-import type { GuildDataRepository, IncidentRepository } from "../database/repositories.js";
+import type {
+  ActivityRepository,
+  GuildDataRepository,
+  IncidentRepository
+} from "../database/repositories.js";
+import type { CorrelationService } from "../../application/services/correlationService.js";
+import type { RaidSessionService } from "../../application/services/raidSessionService.js";
 import type { Clock } from "../../shared/time/clock.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
@@ -8,6 +14,9 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 export interface RetentionJobDependencies {
   readonly incidentRepository: IncidentRepository;
   readonly guildDataRepository: GuildDataRepository;
+  readonly correlationService: CorrelationService;
+  readonly raidSessionService: RaidSessionService;
+  readonly activityRepository: ActivityRepository;
   readonly clock: Clock;
   readonly logger: pino.Logger;
 }
@@ -23,6 +32,11 @@ export function createRetentionJob(deps: RetentionJobDependencies): RetentionJob
   const runOnce = async (): Promise<void> => {
     const now = deps.clock.now();
     const deletedIncidents = await deps.incidentRepository.deleteExpired(now);
+    const deletedCorrelationEvents = await deps.correlationService.deleteExpired(now);
+    const deletedRaidSessions = await deps.raidSessionService.deleteExpired(now);
+    const deletedActivityBuckets = await deps.activityRepository.deleteExpired(
+      new Date(now.getTime() - 180 * 24 * 60 * 60 * 1_000)
+    );
     const dueGuilds = await deps.guildDataRepository.listDeletionCandidates(now);
 
     for (const guildId of dueGuilds) {
@@ -40,6 +54,9 @@ export function createRetentionJob(deps: RetentionJobDependencies): RetentionJob
       {
         event: "retention_job_completed",
         deletedIncidents,
+        deletedCorrelationEvents,
+        deletedRaidSessions,
+        deletedActivityBuckets,
         deletedGuilds: dueGuilds.length
       },
       "Retention job finished"

@@ -106,13 +106,21 @@ function renderSetupPreset(sessionId: string, locale: Locale): InteractionReplyO
           .setCustomId(setupCustomId(sessionId, "preset"))
           .setPlaceholder("Select a preset")
           .addOptions(
-            { label: "BALANCED", value: "BALANCED", description: "Default production setup" },
+            {
+              label: "BALANCED",
+              value: "BALANCED",
+              description: "Delete first suspicious posts, punish on confirmed repeat"
+            },
             {
               label: "STRICT",
               value: "STRICT",
-              description: "Broader detection and longer timeout"
+              description: "Lower thresholds and stronger quarantine for attacked servers"
             },
-            { label: "MONITOR", value: "MONITOR", description: "Log only, no delete or punish" }
+            {
+              label: "CAUTIOUS",
+              value: "CAUTIOUS",
+              description: "Safer first strike for announcement-heavy communities"
+            }
           )
       ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(

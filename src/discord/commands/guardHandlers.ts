@@ -12,6 +12,10 @@ import type {
   RoleDetectionMode
 } from "../../domain/policy/types.js";
 import { t } from "../../shared/i18n/messages.js";
+import { handleDetectionCommand } from "./detection/handlers.js";
+import { handleExceptionsCommand } from "./exceptions/handlers.js";
+import { handlePublishersCommand } from "./publishers/handlers.js";
+import { handleRaidCommand } from "./raid/handlers.js";
 import { dataDeleteCustomId } from "../interactions/customIds.js";
 import type { DiscordAppContext } from "../runtime.js";
 import {
@@ -60,8 +64,28 @@ export async function handleGuardCommand(
     return;
   }
 
+  if (group === "publishers") {
+    await handlePublishersCommand(context, interaction);
+    return;
+  }
+
+  if (group === "exceptions") {
+    await handleExceptionsCommand(context, interaction);
+    return;
+  }
+
+  if (group === "detection") {
+    await handleDetectionCommand(context, interaction);
+    return;
+  }
+
   if (group === "punishment") {
     await handlePunishmentCommand(context, interaction);
+    return;
+  }
+
+  if (group === "raid") {
+    await handleRaidCommand(context, interaction);
     return;
   }
 
@@ -173,6 +197,24 @@ async function handleRolesCommand(
           : `Protected roles:\n${roles.map((entry) => `<@&${entry.roleId}>`).join("\n")}`
       )
     );
+    return;
+  }
+
+  if (subcommand === "risk") {
+    const role = interaction.options.getRole("role", true);
+    const risk = interaction.options.getString("risk", true) as
+      "IGNORE" | "NORMAL" | "HIGH" | "CRITICAL";
+    await context.roleRiskProfileRepository.upsert(interaction.guildId, role.id, risk);
+    await context.auditRepository.append(
+      interaction.guildId,
+      interaction.user.id,
+      "role_risk_set",
+      {
+        roleId: role.id,
+        risk
+      }
+    );
+    await interaction.reply(ephemeral(`Set <@&${role.id}> risk level to ${risk}.`));
     return;
   }
 
@@ -393,6 +435,26 @@ async function handleIncidentsCommand(
                 (incident) => `${incident.createdAt.toISOString()} | ${incident.ruleId ?? "none"}`
               )
               .join("\n")}`
+      )
+    );
+    return;
+  }
+
+  if (subcommand === "explain") {
+    const incidentId = interaction.options.getString("incident_id", true);
+    const incident = await context.incidentRepository.getById(interaction.guildId, incidentId);
+    await interaction.reply(
+      ephemeral(
+        !incident
+          ? "Incident not found."
+          : [
+              `Incident: ${incident.id}`,
+              `Decision: ${incident.decision}`,
+              `Rule: ${incident.ruleId ?? "none"}`,
+              `Source: ${incident.eventSource}`,
+              `Correlation: ${incident.correlationStage}`,
+              `False positive: ${incident.falsePositive ? "yes" : "no"}`
+            ].join("\n")
       )
     );
     return;

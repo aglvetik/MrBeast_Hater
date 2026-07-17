@@ -1,59 +1,111 @@
 # PingGuard
 
-PingGuard is a free public Discord bot for protecting servers from visual mass-ping spam. It looks for messages that combine a protected ping such as `@everyone`, `@here`, or a configured role mention with images, GIFs, videos, stickers, or embed images and very little meaningful text.
-
-Threat example: a compromised account posts a mass ping with a giveaway image and no real explanation. PingGuard can delete the message, apply the configured punishment, save an incident, and send a safe moderation log.
-
-## Features
-
-- One multi-guild Discord application configured with `/guard`.
-- Guided setup wizard using Discord components.
-- Per-guild PostgreSQL settings, protected roles, channel policies, trust policies, incidents, sanctions, escalation steps, and audit events.
-- Deterministic detection only: no AI, OCR, URL fetching, or attachment downloads.
-- Scans normal users, other bots, and webhooks; ignores only PingGuard's own messages.
-- No automatic owner or administrator bypass for detection.
-- English and Russian runtime text.
-- Docker Compose deployment with PostgreSQL and Caddy.
-
-## Non-goals
-
-- No web dashboard in v2.
-- No Redis, sharding manager, OCR, AI classifier, or frontend framework.
-- No automatic safe announcement-channel detection.
-- No production SQLite path.
-
-## Invite
-
-Create an OAuth2 invite in the Discord Developer Portal for your application ID. Use the placeholder site link until a production application ID is chosen:
+PingGuard is a Discord moderation bot for visual mass-ping raid containment. It is designed for the hard case where a legitimate announcement and the first message of an attack can look nearly identical:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot%20applications.commands&permissions=1099780062208
+@everyone or @here
++ image / GIF / video / sticker / embed image
++ little or no meaningful text
 ```
 
-## Required Permissions
+PingGuard now separates containment from punishment.
 
-PingGuard does not require Administrator. Grant only what your policy needs:
+- A suspicious first event is usually deleted and logged.
+- A correlated second event confirms the attack quickly.
+- Scoped publishers can post in approved places without gaining unlimited bypass.
+- Explicit `IGNORE_ALL`, `MONITOR_ONLY`, `NO_PUNISH`, and `FULL_BYPASS` rules always win.
 
-- View Channels
-- Read Message History
-- Send Messages and Embed Links in the moderation log channel
-- Manage Messages
-- Moderate Members for timeouts
-- Kick Members or Ban Members only if explicitly configured
+## Core Behavior
 
-## Gateway Intents
+Balanced default:
 
-Enable Message Content Intent in the Discord Developer Portal. Do not enable or require Server Members Intent.
+- First suspicious post from an ordinary actor: `DELETE_ONLY`
+- First suspicious post from an in-scope scoped publisher: `ALLOW` plus short-lived observation
+- First suspicious post from an objectively new, high-confidence actor: short `QUARANTINE` can apply
+- Second correlated event: `ENFORCE`
+- Active matching raid session: matching actors can be quarantined or enforced immediately, while still honoring explicit caps
 
-The runtime uses only:
+The bot does not automatically trust administrators as publishers. The guild owner can be detected and logged, but is never auto-punished.
 
-- Guilds
-- Guild Messages
-- Message Content
+## What Is New In This Version
+
+- Weighted risk scoring with explainable signals
+- Exact and structural privacy-safe message fingerprints
+- Cross-channel correlation and traversal signals
+- Temporary guild raid sessions
+- Scoped actor policies for users, roles, bots, and webhooks
+- Category policies in addition to channel policies
+- Per-role mention risk levels
+- Batched privacy-safe actor and channel activity tracking
+- Update-safe incident deduplication for `messageCreate` and `messageUpdate`
+- Final action status persistence after all delete / punishment / log attempts finish
+
+## Commands
+
+Primary command:
+
+```text
+/guard
+```
+
+Important groups:
+
+- `/guard setup`
+- `/guard status`
+- `/guard publishers add|remove|list`
+- `/guard exceptions add|remove|list`
+- `/guard channels set|remove|list`
+- `/guard roles add|remove|list|mode|risk`
+- `/guard detection preset|first-strike|thresholds`
+- `/guard punishment member|bot|escalation`
+- `/guard raid status|stop`
+- `/guard incidents recent|user|explain|stats`
+- `/guard data export|delete`
+
+## Policy Model
+
+Channel and category modes:
+
+- `ENFORCE`
+- `DELETE_ONLY`
+- `MONITOR_ONLY`
+- `NO_PUNISH`
+- `IGNORE_ALL`
+- `INHERIT`
+
+Actor policies:
+
+- `SCOPED_PUBLISHER`
+- `NO_PUNISH`
+- `MONITOR_ONLY`
+- `FULL_BYPASS`
+
+## Privacy Summary
+
+PingGuard does not permanently store:
+
+- raw message content
+- normalized text
+- attachment URLs
+- downloaded media
+- raw link hostnames
+
+PingGuard does store:
+
+- Discord snowflake IDs
+- bounded media counts and classes
+- protected mention classes
+- fingerprint hashes
+- action results
+- timestamps
+- short-lived correlation and raid metadata
+- aggregated activity buckets
+
+See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Local Development
 
-Use Node.js 24 LTS.
+Use Node.js 24.
 
 ```bash
 npm ci
@@ -63,67 +115,30 @@ npm run commands:dev
 npm run dev
 ```
 
-Development command registration uses `DISCORD_DEV_GUILD_ID`. Global command registration is separate:
+## Validation
+
+Repository validation:
 
 ```bash
-npm run commands:global
-```
-
-## Tests
-
-```bash
+npm run format:check
+npm run lint
+npm run typecheck
 npm test
 npm run test:coverage
+npm run build
+npm run db:check
+npm audit --omit=dev
 ```
 
-The unit and application tests use mocked adapters and do not log in to Discord. They do not need a real bot token.
+## Deployment Notes
 
-## Docker Deployment
-
-```bash
-cp .env.example .env
-docker compose up -d --build
-```
-
-PostgreSQL is on the internal Compose network only. Caddy serves the static site and proxies health endpoints.
-
-Backups:
-
-```bash
-./scripts/backup-postgres.sh
-./scripts/restore-postgres.sh backups/pingguard-YYYYmmdd-HHMMSS.sql
-```
-
-## Privacy Summary
-
-PingGuard stores Discord IDs and incident metadata only. It does not store raw message content, normalized text, usernames, display names, avatars, attachment URLs, embed URLs, images, videos, GIFs, stickers, or full member lists.
-
-Guild owners can use `/guard data export` and `/guard data delete`.
-
-## Troubleshooting
-
-- Bot does nothing: check Message Content Intent, token, command registration, and guild permissions.
-- Message deletes but punishment fails: check role hierarchy and the specific timeout/kick/ban permission.
-- No logs appear: set a log channel with `/guard setup` or `/guard status`, then check channel Send Messages and Embed Links permissions.
-- Docker health is not ready: check PostgreSQL connectivity, migrations, and Discord login.
-
-## Screenshots
-
-Screenshots are intentionally placeholders until a production application ID and support server are available:
-
-- Setup wizard
-- Incident mod-log embed
-- Status command
-
-## Migration Note
-
-v2 replaces the JavaScript/SQLite prototype. The old `.env` keys, safe-channel bypass lists, mass-role coverage calculation, and `src/index.js` entrypoint are not part of the production TypeScript runtime.
+- Enable the Message Content intent.
+- Do not enable Guild Members intent only for PingGuard.
+- Run the new Drizzle migration before starting the updated bot.
+- Re-register slash commands after deploying the updated command schema.
+- Review scoped publishers and exceptions after upgrade because the new model is more granular than the older trust-only model.
 
 ## Support
 
-- Support server placeholder: `https://discord.gg/your-support-server`
 - GitHub: `https://github.com/aglvetik/MrBeast_Hater`
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+- Support server placeholder: `https://discord.gg/your-support-server`
