@@ -199,10 +199,7 @@ describe("policy engine", () => {
       settings: settings(),
       detection: {
         ...detection,
-        explanation: undefined,
         score: 5,
-        suggestedDecision: undefined,
-        correlationStage: undefined,
         signals: [
           { id: "MENTION_EVERYONE", weight: 10, explanation: "positive" },
           { id: "MEANINGFUL_TEXT", weight: -5, explanation: "negative" }
